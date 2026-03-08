@@ -57,7 +57,7 @@ Your executable will be in `dist/Cyber Planner.exe`
 
 ### Build Requirements
 - PyInstaller (installed automatically by build script)
-- Bundled GIFs: `200.gif`, `jin.gif`, `simpsons-desk.gif`
+- Bundled GIFs: `smoke.gif`, `jin.gif`, `simpsons-desk.gif`  
 
 ## ⌨️ Keyboard Shortcuts
 
