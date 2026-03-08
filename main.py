@@ -53,7 +53,7 @@ from datetime import datetime, timedelta, date
 
 import requests
 from PyQt6.QtCore import Qt, QMimeData, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QDrag, QIcon, QColor, QPalette, QMovie
+from PyQt6.QtGui import QAction, QDrag, QIcon, QColor, QPalette, QMovie, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QWidget,
@@ -269,10 +269,33 @@ class AddTaskDialog(QDialog):
         else:
             self.time_input.setTime(datetime.now().time().replace(second=0, microsecond=0))
 
+        # Duration with unit selector
+        duration_layout = QHBoxLayout()
         self.duration_input = QSpinBox()
-        self.duration_input.setRange(5, 1440)
-        self.duration_input.setValue(task.get("duration_minutes", 60) if task else 60)
-        self.duration_input.setSuffix(" min")
+        self.duration_input.setRange(1, 999)
+        self.duration_unit = QComboBox()
+        self.duration_unit.addItems(["Minutes", "Hours", "Days"])
+        
+        # Set initial duration and unit based on task
+        if task:
+            minutes = task.get("duration_minutes", 60)
+            if minutes >= 1440:  # >= 1 day
+                days = minutes // 1440
+                self.duration_input.setValue(days if days > 0 else 1)
+                self.duration_unit.setCurrentText("Days")
+            elif minutes >= 60:  # >= 1 hour
+                hours = minutes // 60
+                self.duration_input.setValue(hours if hours > 0 else 1)
+                self.duration_unit.setCurrentText("Hours")
+            else:
+                self.duration_input.setValue(minutes)
+                self.duration_unit.setCurrentText("Minutes")
+        else:
+            self.duration_input.setValue(1)
+            self.duration_unit.setCurrentText("Hours")
+        
+        duration_layout.addWidget(self.duration_input)
+        duration_layout.addWidget(self.duration_unit)
 
         self.category_input = QComboBox()
         self.category_input.addItems(self.categories)
@@ -301,7 +324,7 @@ class AddTaskDialog(QDialog):
 
         form.addRow("Task Title", self.title_input)
         form.addRow("Time", self.time_input)
-        form.addRow("Duration", self.duration_input)
+        form.addRow("Duration", duration_layout)
         form.addRow("Category", self.category_input)
         form.addRow("Priority", self.priority_input)
         form.addRow("Recurring", self.recurring_input)
@@ -322,11 +345,22 @@ class AddTaskDialog(QDialog):
         self.accept()
 
     def get_task(self):
+        # Convert duration to minutes based on selected unit
+        duration_value = self.duration_input.value()
+        duration_unit = self.duration_unit.currentText()
+        
+        if duration_unit == "Hours":
+            duration_minutes = duration_value * 60
+        elif duration_unit == "Days":
+            duration_minutes = duration_value * 1440
+        else:  # Minutes
+            duration_minutes = duration_value
+        
         task_data = {
             "id": self.task["id"] if self.task else str(uuid.uuid4()),
             "title": self.title_input.text().strip(),
             "time": self.time_input.time().toString("HH:mm"),
-            "duration_minutes": self.duration_input.value(),
+            "duration_minutes": duration_minutes,
             "category": self.category_input.currentText(),
             "priority": self.priority_input.currentText(),
             "recurring": self.recurring_input.currentText(),
@@ -393,8 +427,9 @@ class SettingsDialog(QDialog):
 
 
 class DraggableTaskList(QListWidget):
-    def __init__(self, parent=None):
+    def __init__(self, main_window=None, parent=None):
         super().__init__(parent)
+        self.main_window = main_window
         self.setDragEnabled(True)
         self.setAcceptDrops(False)
         self.setAlternatingRowColors(False)
@@ -414,12 +449,13 @@ class DraggableTaskList(QListWidget):
         delete_action = menu.addAction("Delete")
 
         action = menu.exec(self.mapToGlobal(position))
-        if action == edit_action:
-            self.parent().edit_task(item)
-        elif action == duplicate_action:
-            self.parent().duplicate_task(item)
-        elif action == delete_action:
-            self.parent().delete_task_from_menu(item)
+        if self.main_window:
+            if action == edit_action:
+                self.main_window.edit_task(item)
+            elif action == duplicate_action:
+                self.main_window.duplicate_task(item)
+            elif action == delete_action:
+                self.main_window.delete_task_from_menu(item)
 
     def startDrag(self, supportedActions):
         item = self.currentItem()
@@ -646,42 +682,57 @@ class MainWindow(QMainWindow):
         self.show_todays_agenda()
 
     def load_background(self):
-        bg_file = self.storage.settings.get("background_file", "")
+        try:
+            # Get central widget
+            central = self.centralWidget()
+            if not central:
+                return
 
-        # If no background file is set, try default bundled GIF
-        if not bg_file:
-            bg_file = resource_path("background.pgn")
-        
-        # If file doesn't exist at saved path, try bundled version
-        if not os.path.exists(bg_file):
-            bg_file = resource_path("background.pgn")
-        
-        # If still doesn't exist, give up
-        if not os.path.exists(bg_file):
-            return
+            bg_file = self.storage.settings.get("background_file", "")
 
-        if hasattr(self, "bg_label"):
-            self.bg_label.deleteLater()
+            # If no background file is set, try default bundled GIF
+            if not bg_file:
+                bg_file = resource_path("background.pgn")
+            
+            # If file doesn't exist at saved path, try bundled version
+            if not os.path.exists(bg_file):
+                bg_file = resource_path("background.pgn")
+            
+            # If still doesn't exist, give up
+            if not os.path.exists(bg_file):
+                return
 
-        self.bg_label = QLabel(self.centralWidget())
-        self.bg_label.setGeometry(0, 0, self.width(), self.height())
-        self.bg_label.setScaledContents(True)
+            # Clean up old background
+            if hasattr(self, "bg_label") and self.bg_label:
+                try:
+                    if hasattr(self, "bg_movie"):
+                        self.bg_movie.stop()
+                    self.bg_label.deleteLater()
+                except:
+                    pass
 
-        if bg_file.lower().endswith(".gif"):
-            self.bg_movie = QMovie(bg_file)
-            self.bg_label.setMovie(self.bg_movie)
-            self.bg_movie.start()
-        else:
-            self.bg_label.setStyleSheet(
-                f"""
-                QLabel {{
-                    border-image: url("{bg_file}") 0 0 0 0 stretch stretch;
-                }}
-                """
-            )
+            # Create background label
+            self.bg_label = QLabel(central)
+            self.bg_label.setGeometry(0, 0, self.width(), self.height())
+            self.bg_label.setScaledContents(True)
 
-        self.bg_label.lower()
-        self.bg_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            # Load GIF or image
+            if bg_file.lower().endswith(".gif"):
+                self.bg_movie = QMovie(bg_file)
+                if self.bg_movie.isValid():
+                    self.bg_label.setMovie(self.bg_movie)
+                    self.bg_movie.start()
+            else:
+                # Use QPixmap for static images
+                pixmap = QPixmap(bg_file)
+                if not pixmap.isNull():
+                    self.bg_label.setPixmap(pixmap)
+
+            # Send to back and make transparent to mouse events
+            self.bg_label.lower()
+            self.bg_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        except Exception as e:
+            pass  # Silently ignore background loading errors
 
     def _build_ui(self):
         central = QWidget()
@@ -770,7 +821,7 @@ class MainWindow(QMainWindow):
         task_controls.addWidget(self.complete_hint, 1)
         right_layout.addLayout(task_controls)
 
-        self.task_list = DraggableTaskList()
+        self.task_list = DraggableTaskList(main_window=self)
         self.task_list.itemChanged.connect(self.handle_task_checked)
         right_layout.addWidget(self.task_list, 1)
 
@@ -1060,24 +1111,28 @@ class MainWindow(QMainWindow):
             self.refresh_analytics()
 
     def duplicate_task(self, item: QListWidgetItem):
-        task_id = item.data(Qt.ItemDataRole.UserRole)
-        task = None
-        for t in self.storage.get_tasks_for_date(self.selected_date):
-            if t["id"] == task_id:
-                task = t.copy()
-                break
+        try:
+            task_id = item.data(Qt.ItemDataRole.UserRole)
+            task = None
+            for t in self.storage.get_tasks_for_date(self.selected_date):
+                if t["id"] == task_id:
+                    task = t.copy()
+                    break
 
-        if not task:
-            return
+            if not task:
+                QMessageBox.warning(self, "Error", "Task not found.")
+                return
 
-        task["id"] = str(uuid.uuid4())
-        task["created_at"] = datetime.now().isoformat()
-        task["reminders_sent"] = []
-        self.storage.add_task(self.selected_date, task)
-        self.refresh_task_list()
-        self.refresh_calendar()
-        self.refresh_analytics()
-        QMessageBox.information(self, "Duplicated", f"Task '{task['title']}' duplicated.")
+            task["id"] = str(uuid.uuid4())
+            task["created_at"] = datetime.now().isoformat()
+            task["reminders_sent"] = []
+            self.storage.add_task(self.selected_date, task)
+            self.refresh_task_list()
+            self.refresh_calendar()
+            self.refresh_analytics()
+            QMessageBox.information(self, "Duplicated", f"Task '{task['title']}' duplicated.")
+        except Exception as e:
+            QMessageBox.critical(self, "Duplicate Error", f"Failed to duplicate task: {str(e)}")
 
     def delete_task_from_menu(self, item: QListWidgetItem):
         task_id = item.data(Qt.ItemDataRole.UserRole)
@@ -1329,8 +1384,25 @@ class MainWindow(QMainWindow):
                     task = t
                     break
 
+            if not task:
+                item.setCheckState(Qt.CheckState.Unchecked)
+                return
+
+            # Ask for confirmation before deleting
+            reply = QMessageBox.question(
+                self,
+                "Complete Task",
+                f"Mark '{task['title']}' as complete and delete it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            
+            if reply != QMessageBox.StandardButton.Yes:
+                # User clicked No, uncheck the item
+                item.setCheckState(Qt.CheckState.Unchecked)
+                return
+
             # Handle recurring tasks
-            if task and task.get("recurring") != "None":
+            if task.get("recurring") != "None":
                 self.generate_next_recurring_task(task)
 
             self.storage.delete_task(self.selected_date, task_id)
