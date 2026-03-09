@@ -32,15 +32,13 @@ if exist Cyber*.spec del /q Cyber*.spec
 python3 -m PyInstaller ^
     --onefile ^
     --windowed ^
-    --icon=cyber_planner.ico ^
+    --icon=cyber_planner2.ico ^
     --name="Cyber Planner" ^
     --distpath=dist ^
     --workpath=build ^
     --specpath=. ^
-    --add-data "200.gif;." ^
-    --add-data "jin.gif;." ^
-    --add-data "simpsons-desk.gif;." ^
-    --add-data "cyber_planner.ico;." ^
+    --add-data "backgrounds;backgrounds" ^
+    --add-data "cyber_planner2.ico;." ^
     main.py
 
 if %errorlevel% neq 0 (
