@@ -1379,6 +1379,6 @@ If you find Cyber Planner useful:
 
 ---
 
-**© 2024-2026 Cyber Planner** • All rights reserved • **Custom License** • v2.5 Production Ready
+**© 2026 Cyber Planner** • All rights reserved • **Custom License** • v2.5 Production Ready
 
 </div>
